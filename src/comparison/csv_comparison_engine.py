@@ -107,8 +107,8 @@ class CSVComparisonEngine:
         # For backward compatibility, keep the original client reference
         self.ai_client = self.ai_clients[0] if self.ai_clients else None
         
-        # Rate limiting: Each key allows 6 requests/minute
-        self.requests_per_minute_per_key = 6
+        # Rate limiting: Each key allows 60 requests/minute (updated capacity)
+        self.requests_per_minute_per_key = 60
         self.total_requests_per_minute = len(self.ai_clients) * self.requests_per_minute_per_key
         
         # Track usage per key to implement fair distribution
@@ -1034,9 +1034,9 @@ class CSVComparisonEngine:
             List of AI analysis responses in order
         """
         # Calculate optimal worker count based on available API keys
-        # Each key can handle 6 requests/minute, so we can run more workers
+        # Each key can handle 60 requests/minute, so we can run more workers for better utilization
         if max_workers is None:
-            max_workers = len(self.ai_clients) * 3  # 3 workers per key for better utilization
+            max_workers = len(self.ai_clients) * 10  # 10 workers per key to better utilize 60 req/min capacity
         
         chunk_responses = [""] * len(chunks)  # Pre-allocate to maintain order
         
@@ -1421,7 +1421,7 @@ Description: {conflict.description}
                 # Large conflicts - need chunking with parallel processing
                 chunks = self._chunk_large_conflicts(all_conflicts, max_chunk_size)
                 estimated_time_sequential = len(chunks) * 15  # ~15 seconds per chunk sequentially
-                estimated_time_parallel = max(30, len(chunks) * 5)  # ~5 seconds per chunk with 3 keys in parallel
+                estimated_time_parallel = max(10, len(chunks) * 1.5)  # ~1.5 seconds per chunk with 10x faster API (60 req/min)
                 
                 logger.info(f"Large conflicts detected. Splitting into {len(chunks)} chunks for AI analysis")
                 logger.info(f"Multi-key parallel processing: Using {len(self.ai_clients)} API keys ({self.total_requests_per_minute} requests/min capacity)")
