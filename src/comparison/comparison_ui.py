@@ -276,6 +276,7 @@ def render_file_selection_interface():
         # Clear previous results
         st.session_state.comparison_results = None
         st.session_state.line_comparison_data = None
+        st.session_state.proceed_to_ai = False  # Reset AI analysis state
     
     # Show line-by-line comparison if files are selected
     if st.session_state.current_comparison_files:
@@ -293,16 +294,92 @@ def render_file_selection_interface():
         # If user chose to proceed to AI analysis
         if line_comparison_result is not None:
             st.session_state.line_comparison_data = line_comparison_result
+            st.session_state.proceed_to_ai = True  # Flag to show AI options persistently
             
-            # Proceed with AI analysis using the conflict data
-            perform_ai_analysis_with_conflicts(
+        # Show AI analysis options if user previously chose to proceed OR if we just got line comparison result
+        if line_comparison_result is not None or (hasattr(st.session_state, 'proceed_to_ai') and st.session_state.proceed_to_ai):
+            # Get the line comparison data from session state if not available from current run
+            conflict_data = line_comparison_result if line_comparison_result is not None else st.session_state.get('line_comparison_data', '')
+            
+            # Show AI analysis options
+            render_ai_analysis_options(
                 comparison_files['selected_file_a'],
                 comparison_files['selected_file_b'], 
                 comparison_files['file_a_path'],
                 comparison_files['file_b_path'],
                 comparison_files['fast_mode'],
-                line_comparison_result
+                conflict_data
             )
+
+
+def render_ai_analysis_options(selected_file_a: str, selected_file_b: str, file_a_path: str, file_b_path: str, fast_mode: bool, conflict_data: str):
+    """
+    Render AI analysis options: Default analysis or Custom prompt analysis.
+    
+    Args:
+        selected_file_a: Selected heading from file A
+        selected_file_b: Selected heading from file B  
+        file_a_path: File path for file A
+        file_b_path: File path for file B
+        fast_mode: Whether to use fast mode analysis
+        conflict_data: Pre-processed conflict data from line-by-line comparison
+    """
+    st.markdown("---")
+    st.subheader("🤖 AI Analysis Options")
+    
+    # Create tabs for different analysis types
+    tab_default, tab_custom = st.tabs(["📊 Default Analysis", "✍️ Custom Prompt"])
+    
+    with tab_default:
+        st.markdown("**Structured Line-by-Line Analysis**")
+        st.markdown("Get structured performance analysis with line-by-line timing details and severity assessment.")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            mode_text = "Fast Mode (Two-pass Summarization)" if fast_mode else "Standard Mode (Full Preprocessing + Parallel Analysis)"
+            st.info(f"📈 Analysis Mode: {mode_text}")
+        
+        with col2:
+            if st.button("🚀 Run Default Analysis", type="primary", key="default_analysis"):
+                st.write("🔄 Button clicked! Starting analysis...")
+                try:
+                    perform_ai_analysis_with_conflicts(
+                        selected_file_a, selected_file_b, 
+                        file_a_path, file_b_path, 
+                        fast_mode, conflict_data
+                    )
+                except Exception as e:
+                    st.error(f"❌ Error in button handler: {e}")
+                    st.exception(e)
+    
+    with tab_custom:
+        st.markdown("**Custom Analysis with Your Own Prompt**")
+        st.markdown("Provide a specific question or analysis request to get targeted insights.")
+        
+        # Custom prompt input
+        custom_prompt = st.text_area(
+            "Enter your custom analysis prompt:",
+            placeholder="Example: 'Suggest async fixes for IO operations' or 'Check for memory leaks' or 'Focus on database connection issues'",
+            height=100,
+            help="Ask specific questions about the performance data. The AI will analyze the conflict data according to your request."
+        )
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            if custom_prompt.strip():
+                st.success(f"✅ Custom prompt ready ({len(custom_prompt)} characters)")
+            else:
+                st.warning("⚠️ Please enter a custom prompt above")
+        
+        with col2:
+            if st.button("🎯 Run Custom Analysis", type="secondary", key="custom_analysis", 
+                        disabled=not custom_prompt.strip()):
+                if custom_prompt.strip():
+                    perform_custom_ai_analysis(
+                        selected_file_a, selected_file_b, 
+                        file_a_path, file_b_path, 
+                        fast_mode, conflict_data, custom_prompt.strip()
+                    )
 
 
 def perform_ai_analysis_with_conflicts(selected_file_a: str, selected_file_b: str, file_a_path: str, file_b_path: str, fast_mode: bool, conflict_data: str):
@@ -318,13 +395,19 @@ def perform_ai_analysis_with_conflicts(selected_file_a: str, selected_file_b: st
         conflict_data: Pre-processed conflict data from line-by-line comparison
     """
     try:
+        st.write("🔧 Starting AI analysis function...")
         mode_text = "Fast Mode (Two-pass Summarization)" if fast_mode else "Standard Mode (Full Preprocessing + Parallel Analysis)"
+        st.write(f"📊 Mode: {mode_text}")
+        st.write(f"📝 Conflict data length: {len(conflict_data) if conflict_data else 0} characters")
+        
         with st.spinner(f"🤖 Performing AI analysis with line-by-line conflict data ({mode_text})..."):
             
             # Initialize comparison engine
+            st.write("🔧 Initializing comparison engine...")
             engine = CSVComparisonEngine()
             
             # Use the new method that accepts pre-processed conflict data
+            st.write("🔧 Calling analyze_conflicts_directly...")
             results = engine.analyze_conflicts_directly(
                 conflict_data=conflict_data,
                 file_a_name=f"File A: {selected_file_a}",
@@ -332,14 +415,65 @@ def perform_ai_analysis_with_conflicts(selected_file_a: str, selected_file_b: st
                 fast_mode=fast_mode
             )
             
+            st.write("🔧 Analysis completed, storing results...")
             # Store results in session state
             st.session_state.comparison_results = results
             
             success_msg = f"✅ AI analysis completed using {mode_text} with line-by-line conflict data!"
             st.success(success_msg)
+            st.write(f"🔧 Results stored in session state: {bool(results)}")
+            
+    except ImportError as e:
+        st.error(f"❌ Import error in AI analysis: {e}")
+        st.exception(e)
+    except Exception as e:
+        st.error(f"❌ AI analysis failed: {e}")
+        st.exception(e)
+
+
+def perform_custom_ai_analysis(selected_file_a: str, selected_file_b: str, file_a_path: str, file_b_path: str, 
+                             fast_mode: bool, conflict_data: str, custom_prompt: str):
+    """
+    Perform custom AI analysis using user-provided prompt with pre-processed conflict data.
+    
+    Args:
+        selected_file_a: Selected heading from file A
+        selected_file_b: Selected heading from file B  
+        file_a_path: File path for file A
+        file_b_path: File path for file B
+        fast_mode: Whether to use fast mode analysis
+        conflict_data: Pre-processed conflict data from line-by-line comparison
+        custom_prompt: User-provided custom analysis prompt
+    """
+    try:
+        mode_text = "Fast Mode" if fast_mode else "Standard Mode"
+        with st.spinner(f"🎯 Performing custom AI analysis ({mode_text})..."):
+            
+            # Initialize comparison engine
+            engine = CSVComparisonEngine()
+            
+            # Use the new custom prompt method
+            results = engine.analyze_with_custom_prompt(
+                conflict_data=conflict_data,
+                file_a_name=f"File A: {selected_file_a}",
+                file_b_name=f"File B: {selected_file_b}",
+                custom_prompt=custom_prompt,
+                fast_mode=fast_mode
+            )
+            
+            # Store results in session state
+            st.session_state.comparison_results = results
+            
+            success_msg = f"✅ Custom AI analysis completed using {mode_text}!"
+            st.success(success_msg)
+            
+            # Show a brief preview of the custom analysis
+            with st.expander("🎯 Custom Analysis Preview", expanded=True):
+                st.markdown(f"**Your Question:** {custom_prompt}")
+                st.markdown("**Analysis completed!** Full results are shown below in the results section.")
             
     except Exception as e:
-        st.error(f"AI analysis failed: {e}")
+        st.error(f"Custom AI analysis failed: {e}")
         st.exception(e)
 
 

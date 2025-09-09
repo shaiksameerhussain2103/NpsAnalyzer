@@ -1587,7 +1587,7 @@ Description: {conflict.description}
         
         try:
             if fast_mode:
-                # Fast mode: Direct analysis of conflict data
+                # Fast mode: Direct analysis of conflict data with structured output
                 analysis_prompt = f"""
                 Analyze the following line-by-line comparison conflicts between two profiling files:
                 
@@ -1597,13 +1597,26 @@ Description: {conflict.description}
                 
                 {conflict_data}
                 
-                Please provide:
-                1. **Root Cause Analysis**: What likely caused these performance differences?
-                2. **Impact Assessment**: Which conflicts are most critical?
-                3. **Technical Recommendations**: Specific steps to address the issues
-                4. **Performance Summary**: Overall impact on system performance
+                CRITICAL: You must return results in the exact structured format below. Do not provide long paragraphs or summaries.
                 
-                Focus on the most significant conflicts and provide actionable insights.
+                Format each conflict line as:
+                <RowID> <CSVIndex> <Function/Method Signature> <ChangeType> <ExtraInfo> <OldTime> <NewTime> <Severity>
+                
+                Where:
+                - RowID: Sequential number
+                - CSVIndex: Line number in CSV (if available)
+                - Function/Method: Full method signature
+                - ChangeType: content_diff, time_diff, both, or new/removed
+                - ExtraInfo: Brief technical note or N/A
+                - OldTime: Original timing in ms or N/A
+                - NewTime: New timing in ms or N/A  
+                - Severity: high, medium, or low
+                
+                Example format:
+                1    45    chs.common.styles.PinListDecorationStyle.refreshDecorations()    time_diff    Performance regression    1250.00 ms    2100.00 ms    high
+                2    67    org.myapp.service.UserService.processUser()    content_diff    Method signature changed    N/A    N/A    medium
+                
+                Only list conflicting/changed lines. Provide structured results only, no summaries.
                 """
                 
                 # Single AI call for fast analysis
@@ -1635,7 +1648,7 @@ Description: {conflict.description}
                 }
                 
             else:
-                # Standard mode: More detailed analysis
+                # Standard mode: Structured analysis with detailed insights
                 analysis_prompt = f"""
                 Perform comprehensive analysis of the following line-by-line comparison conflicts:
                 
@@ -1646,30 +1659,30 @@ Description: {conflict.description}
                 CONFLICT DATA:
                 {conflict_data}
                 
-                Please provide detailed analysis including:
+                CRITICAL: You must return results in the exact structured format below, followed by brief insights.
                 
-                ## Root Cause Hypothesis
-                Analyze what likely caused these performance differences based on the stack traces and timing changes.
+                ## STRUCTURED ANALYSIS RESULTS
                 
-                ## Impact Assessment  
-                Categorize conflicts by severity and impact on overall system performance.
+                Format each conflict line as:
+                <RowID> <CSVIndex> <Function/Method Signature> <ChangeType> <ExtraInfo> <OldTime> <NewTime> <Severity>
                 
-                ## Technical Deep Dive
-                For high-severity conflicts, provide detailed technical explanations of:
-                - What each affected method does
-                - Why performance changed
-                - Interconnections between different performance issues
+                Where:
+                - RowID: Sequential number
+                - CSVIndex: Line number in CSV (if available)
+                - Function/Method: Full method signature
+                - ChangeType: content_diff, time_diff, both, or new/removed
+                - ExtraInfo: Brief technical note or N/A
+                - OldTime: Original timing in ms or N/A
+                - NewTime: New timing in ms or N/A  
+                - Severity: high, medium, or low
                 
-                ## Debugging Steps
-                Provide step-by-step debugging approach to investigate these issues further.
+                ## TECHNICAL INSIGHTS (Brief)
                 
-                ## Suggested Fixes
-                Offer specific, actionable recommendations to address each category of issues.
+                **Root Cause Summary**: Brief analysis of likely causes
+                **Critical Issues**: Top 3 most severe performance regressions
+                **Recommended Actions**: Specific fix suggestions for high-severity items
                 
-                ## Performance Optimization Strategy
-                Suggest a prioritized approach to fixing these performance issues.
-                
-                Focus on providing actionable, technical insights suitable for developers.
+                Focus on structured data first, then brief actionable insights. No long paragraphs.
                 """
                 
                 # Single comprehensive AI call
@@ -1705,6 +1718,83 @@ Description: {conflict.description}
             
         except Exception as e:
             logger.error(f"Error in direct conflict analysis: {e}")
+            raise
+
+    def analyze_with_custom_prompt(self, conflict_data: str, file_a_name: str, file_b_name: str, 
+                                 custom_prompt: str, fast_mode: bool = False) -> Dict[str, Any]:
+        """
+        Analyze conflict data using a custom user-provided prompt.
+        
+        This method allows users to provide their own analysis prompt while still
+        using the preprocessed conflict data and existing infrastructure.
+        
+        Args:
+            conflict_data: Pre-formatted conflict data string
+            file_a_name: Display name for first file
+            file_b_name: Display name for second file
+            custom_prompt: User-provided custom analysis prompt
+            fast_mode: Whether to use fast analysis mode
+            
+        Returns:
+            Dictionary containing custom analysis results and metadata
+        """
+        logger.info(f"Starting custom prompt AI analysis")
+        logger.info(f"Custom prompt length: {len(custom_prompt)} characters")
+        logger.info(f"Fast mode: {fast_mode}")
+        
+        start_time = time.time()
+        
+        try:
+            # Construct the analysis prompt with custom user input
+            full_prompt = f"""
+            Files being compared:
+            - {file_a_name}
+            - {file_b_name}
+            
+            CONFLICT DATA:
+            {conflict_data}
+            
+            USER'S CUSTOM REQUEST:
+            {custom_prompt}
+            
+            Please analyze the conflict data according to the user's specific request above.
+            Provide structured, actionable results relevant to their question.
+            """
+            
+            # Single AI call with custom prompt
+            messages = [
+                {
+                    "role": "user",
+                    "content": full_prompt
+                }
+            ]
+            ai_response = self._make_api_request_with_retry(messages, max_retries=3)
+            processing_time = time.time() - start_time
+            
+            # Format results
+            results = {
+                "analysis_summary": f"Custom Analysis: {custom_prompt[:100]}..." if len(custom_prompt) > 100 else f"Custom Analysis: {custom_prompt}",
+                "ai_analysis": ai_response,
+                "processing_info": {
+                    "mode": "custom_prompt_analysis",
+                    "processing_time": f"{processing_time:.1f}s",
+                    "data_source": "line_by_line_conflicts",
+                    "fast_mode": fast_mode,
+                    "custom_prompt": custom_prompt
+                },
+                "metadata": {
+                    "file_a": file_a_name,
+                    "file_b": file_b_name,
+                    "analysis_method": "custom_prompt_analysis",
+                    "analysis_timestamp": pd.Timestamp.now().isoformat()
+                }
+            }
+            
+            logger.info(f"Custom prompt analysis completed in {processing_time:.1f}s")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in custom prompt analysis: {e}")
             raise
 
 
