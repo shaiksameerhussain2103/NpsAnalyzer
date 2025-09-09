@@ -1,9 +1,0 @@
-Product_ID,Product_Name,Description,Price,Category,Launch_Date,Is_Available
-PROD001,Smartphone Pro,High-end smartphone with 128GB storage,899.99,Electronics,2023-01-15,True
-PROD002,Café Latte Maker,Premium coffee machine for home use,299.50,Appliances,2023-02-20,True
-PROD003,Gaming Laptop,High-performance laptop for gaming enthusiasts,1299.00,Electronics,2023-03-10,False
-PROD004,Organic Green Tea,"Premium organic green tea, 50 tea bags",24.99,Food & Beverage,2023-01-05,True
-PROD005,Bluetooth Headphones,Wireless noise-canceling headphones,199.99,Electronics,2023-04-01,True
-PROD006,Yoga Mat Premium,Eco-friendly yoga mat with carrying bag,89.99,Sports & Fitness,2023-02-14,True
-PROD007,Smart Watch,Fitness tracking smartwatch with GPS,349.00,Electronics,2023-03-25,False
-PROD008,Artisan Chocolate Box,"Handcrafted chocolates, assorted flavors",45.50,Food & Beverage,2023-01-30,True
