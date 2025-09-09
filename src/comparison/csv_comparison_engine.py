@@ -406,7 +406,8 @@ class CSVComparisonEngine:
         
         # Pattern detection for different types of noise
         self_time_pattern = re.compile(r'Self time.*?0\.0 ms.*?0\.0 ms.*?1')
-        java_internal_pattern = re.compile(r'(java\.(lang|util|awt|io|net|security)|javax\.|sun\.|jdk\.internal\.)', re.IGNORECASE)
+        # Enhanced Java internal pattern to match our filtering method
+        java_internal_pattern = re.compile(r'(java\.|javax\.|sun\.|com\.sun\.|jdk\.internal\.|oracle\.|com\.oracle\.)', re.IGNORECASE)
         
         # First pass: analyze frequencies and patterns
         significant_lines = []
@@ -456,11 +457,10 @@ class CSVComparisonEngine:
                     processed_lines.extend(group[:2])  # Max 2 entries
                     
             elif pattern_type.startswith("JAVA_INTERNAL_"):
-                if len(group) >= 2:
-                    class_name = pattern_type.replace("JAVA_INTERNAL_", "")
-                    processed_lines.append(f"[COMPRESSED] {len(group)}x {class_name} internal calls (JDK boilerplate)")
-                else:
-                    processed_lines.extend(group)
+                # IMPROVEMENT: Completely filter out Java internal/system packages
+                # to focus only on application code - no compression, just skip entirely
+                logger.debug(f"Filtered out {len(group)} Java internal lines from preprocessing")
+                continue  # Skip all Java internal lines completely
                     
             elif pattern_type == "JVM_COMPILATION":
                 if len(group) >= 2:
@@ -519,6 +519,39 @@ class CSVComparisonEngine:
         else:
             return 'System'
     
+    def _is_java_internal_line(self, function_path: str) -> bool:
+        """
+        Check if a function path belongs to Java internal/system packages.
+        
+        Args:
+            function_path: Full function path (e.g., "java.awt.EventQueue.dispatchEventImpl")
+            
+        Returns:
+            True if this is a Java internal line that should be filtered out
+        """
+        if not function_path:
+            return False
+            
+        function_path_lower = function_path.lower().strip()
+        
+        # Java internal/system package patterns to filter out
+        java_internal_prefixes = [
+            'java.',           # Core Java packages
+            'javax.',          # Java extensions
+            'sun.',            # Sun/Oracle internal packages  
+            'com.sun.',        # Sun internal packages
+            'jdk.internal.',   # JDK internal packages
+            'oracle.',         # Oracle internal packages
+            'com.oracle.',     # Oracle packages
+        ]
+        
+        # Check if function path starts with any Java internal prefix
+        for prefix in java_internal_prefixes:
+            if function_path_lower.startswith(prefix):
+                return True
+                
+        return False
+    
     def _parse_stack_trace_line(self, csv_line: str) -> Optional[StackTraceMapping]:
         """
         Parse a CSV line to extract stack trace and timing information.
@@ -555,6 +588,11 @@ class CSVComparisonEngine:
             # Parse hits
             hits_match = re.search(r'(\d+)', hits_str)
             timing_data['hits'] = float(hits_match.group(1)) if hits_match else 1.0
+            
+            # Filter out Java internal/system packages - focus only on application code
+            if self._is_java_internal_line(name):
+                logger.debug(f"Filtered out Java internal line: {name}")
+                return None
             
             # Parse stack trace information from name field
             class_name, method_name, line_number = self._extract_stack_trace_info(name)
@@ -1525,6 +1563,149 @@ Description: {conflict.description}
         
         logger.info(f"Analysis complete: {len(conflicts)} conflicts found")
         return results
+    
+    def analyze_conflicts_directly(self, conflict_data: str, file_a_name: str, file_b_name: str, fast_mode: bool = False) -> Dict[str, Any]:
+        """
+        Analyze pre-processed conflict data directly using AI, bypassing file comparison.
+        
+        This method is designed to work with conflict data from line-by-line comparison,
+        providing AI analysis without re-processing the entire files.
+        
+        Args:
+            conflict_data: Pre-formatted conflict data string
+            file_a_name: Display name for first file
+            file_b_name: Display name for second file
+            fast_mode: Whether to use fast analysis mode
+            
+        Returns:
+            Dictionary containing analysis results and metadata
+        """
+        logger.info(f"Starting direct AI analysis of conflict data")
+        logger.info(f"Fast mode: {fast_mode}")
+        
+        start_time = time.time()
+        
+        try:
+            if fast_mode:
+                # Fast mode: Direct analysis of conflict data
+                analysis_prompt = f"""
+                Analyze the following line-by-line comparison conflicts between two profiling files:
+                
+                Files being compared:
+                - {file_a_name}
+                - {file_b_name}
+                
+                {conflict_data}
+                
+                Please provide:
+                1. **Root Cause Analysis**: What likely caused these performance differences?
+                2. **Impact Assessment**: Which conflicts are most critical?
+                3. **Technical Recommendations**: Specific steps to address the issues
+                4. **Performance Summary**: Overall impact on system performance
+                
+                Focus on the most significant conflicts and provide actionable insights.
+                """
+                
+                # Single AI call for fast analysis
+                messages = [
+                    {
+                        "role": "user", 
+                        "content": analysis_prompt
+                    }
+                ]
+                ai_response = self._make_api_request_with_retry(messages, max_retries=3)
+                processing_time = time.time() - start_time
+                
+                # Format results
+                results = {
+                    "analysis_summary": "Direct analysis of line-by-line conflicts (Fast Mode)",
+                    "ai_analysis": ai_response,
+                    "processing_info": {
+                        "mode": "fast_direct_analysis",
+                        "processing_time": f"{processing_time:.1f}s",
+                        "data_source": "line_by_line_conflicts",
+                        "fast_mode": True
+                    },
+                    "metadata": {
+                        "file_a": file_a_name,
+                        "file_b": file_b_name,
+                        "analysis_method": "direct_conflict_analysis",
+                        "analysis_timestamp": pd.Timestamp.now().isoformat()
+                    }
+                }
+                
+            else:
+                # Standard mode: More detailed analysis
+                analysis_prompt = f"""
+                Perform comprehensive analysis of the following line-by-line comparison conflicts:
+                
+                Files being compared:
+                - {file_a_name}
+                - {file_b_name}
+                
+                CONFLICT DATA:
+                {conflict_data}
+                
+                Please provide detailed analysis including:
+                
+                ## Root Cause Hypothesis
+                Analyze what likely caused these performance differences based on the stack traces and timing changes.
+                
+                ## Impact Assessment  
+                Categorize conflicts by severity and impact on overall system performance.
+                
+                ## Technical Deep Dive
+                For high-severity conflicts, provide detailed technical explanations of:
+                - What each affected method does
+                - Why performance changed
+                - Interconnections between different performance issues
+                
+                ## Debugging Steps
+                Provide step-by-step debugging approach to investigate these issues further.
+                
+                ## Suggested Fixes
+                Offer specific, actionable recommendations to address each category of issues.
+                
+                ## Performance Optimization Strategy
+                Suggest a prioritized approach to fixing these performance issues.
+                
+                Focus on providing actionable, technical insights suitable for developers.
+                """
+                
+                # Single comprehensive AI call
+                messages = [
+                    {
+                        "role": "user",
+                        "content": analysis_prompt
+                    }
+                ]
+                ai_response = self._make_api_request_with_retry(messages, max_retries=3)
+                processing_time = time.time() - start_time
+                
+                # Format results
+                results = {
+                    "analysis_summary": "Comprehensive direct analysis of line-by-line conflicts (Standard Mode)",
+                    "ai_analysis": ai_response,
+                    "processing_info": {
+                        "mode": "standard_direct_analysis", 
+                        "processing_time": f"{processing_time:.1f}s",
+                        "data_source": "line_by_line_conflicts",
+                        "fast_mode": False
+                    },
+                    "metadata": {
+                        "file_a": file_a_name,
+                        "file_b": file_b_name,
+                        "analysis_method": "direct_conflict_analysis",
+                        "analysis_timestamp": pd.Timestamp.now().isoformat()
+                    }
+                }
+            
+            logger.info(f"Direct conflict analysis completed in {processing_time:.1f}s")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in direct conflict analysis: {e}")
+            raise
 
 
 if __name__ == "__main__":

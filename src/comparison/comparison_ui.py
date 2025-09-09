@@ -25,6 +25,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from csv_splitter import CSVSplitter
 from comparison.csv_comparison_engine import CSVComparisonEngine
+from comparison.line_by_line_comparator import render_line_by_line_comparison_ui
 
 
 def render_comparison_page():
@@ -33,13 +34,15 @@ def render_comparison_page():
     st.title("🔍 CSV Comparison & AI Analysis")
     st.markdown("---")
     st.markdown("""
-    **Advanced CSV Comparison Tool with AI Analysis**
+    **Advanced CSV Comparison Tool with Line-by-Line Analysis & AI**
     
     This addon feature allows you to:
     - Upload two CSV files for comparison
     - Automatically separate files using hierarchical detection
     - Select specific sections for detailed comparison
-    - Get AI-powered analysis of differences using Siemens API
+    - **🆕 Line-by-Line Comparison**: See exact differences and timing changes
+    - **User Choice**: Decide whether to proceed to AI analysis or stop at line comparison
+    - Get AI-powered analysis of conflicts using Siemens API (optional)
     """)
     
     # Initialize session state
@@ -49,6 +52,10 @@ def render_comparison_page():
         st.session_state.comparison_files_b = {}
     if 'comparison_results' not in st.session_state:
         st.session_state.comparison_results = None
+    if 'line_comparison_data' not in st.session_state:
+        st.session_state.line_comparison_data = None
+    if 'current_comparison_files' not in st.session_state:
+        st.session_state.current_comparison_files = None
     
     # Create two columns for file uploads
     col1, col2 = st.columns(2)
@@ -86,6 +93,13 @@ def render_comparison_page():
     if st.session_state.comparison_results:
         st.markdown("---")
         render_comparison_results()
+    
+    # Show line-by-line comparison status if available
+    if st.session_state.line_comparison_data and not st.session_state.comparison_results:
+        st.markdown("---")
+        st.info("✅ Line-by-line comparison completed. AI analysis was not requested.")
+        with st.expander("📋 View Line-by-Line Comparison Summary"):
+            st.text_area("Conflict Data:", st.session_state.line_comparison_data, height=200)
 
 
 def process_uploaded_file(uploaded_file, file_type: str):
@@ -243,14 +257,90 @@ def render_file_selection_interface():
             pass  # Ignore size estimation errors
     
     # Comparison button
-    if st.button("🔍 Compare Selected Files", type="primary"):
+    if st.button("🔍 Start Line-by-Line Comparison", type="primary"):
         # Get the actual file paths by matching the selected display names back to indices
         file_a_index = file_names_a.index(selected_file_a)
         file_b_index = file_names_b.index(selected_file_b)
         file_a_path = files_a[file_a_index]
         file_b_path = files_b[file_b_index]
         
-        perform_comparison(selected_file_a, selected_file_b, file_a_path, file_b_path, fast_mode)
+        # Store current comparison files for later use
+        st.session_state.current_comparison_files = {
+            'selected_file_a': selected_file_a,
+            'selected_file_b': selected_file_b,
+            'file_a_path': file_a_path,
+            'file_b_path': file_b_path,
+            'fast_mode': fast_mode
+        }
+        
+        # Clear previous results
+        st.session_state.comparison_results = None
+        st.session_state.line_comparison_data = None
+    
+    # Show line-by-line comparison if files are selected
+    if st.session_state.current_comparison_files:
+        st.markdown("---")
+        comparison_files = st.session_state.current_comparison_files
+        
+        # Render line-by-line comparison UI
+        line_comparison_result = render_line_by_line_comparison_ui(
+            comparison_files['file_a_path'],
+            comparison_files['file_b_path'], 
+            comparison_files['selected_file_a'],
+            comparison_files['selected_file_b']
+        )
+        
+        # If user chose to proceed to AI analysis
+        if line_comparison_result is not None:
+            st.session_state.line_comparison_data = line_comparison_result
+            
+            # Proceed with AI analysis using the conflict data
+            perform_ai_analysis_with_conflicts(
+                comparison_files['selected_file_a'],
+                comparison_files['selected_file_b'], 
+                comparison_files['file_a_path'],
+                comparison_files['file_b_path'],
+                comparison_files['fast_mode'],
+                line_comparison_result
+            )
+
+
+def perform_ai_analysis_with_conflicts(selected_file_a: str, selected_file_b: str, file_a_path: str, file_b_path: str, fast_mode: bool, conflict_data: str):
+    """
+    Perform AI analysis using pre-processed conflict data from line-by-line comparison.
+    
+    Args:
+        selected_file_a: Selected heading from file A
+        selected_file_b: Selected heading from file B  
+        file_a_path: File path for file A
+        file_b_path: File path for file B
+        fast_mode: Whether to use fast mode analysis
+        conflict_data: Pre-processed conflict data from line-by-line comparison
+    """
+    try:
+        mode_text = "Fast Mode (Two-pass Summarization)" if fast_mode else "Standard Mode (Full Preprocessing + Parallel Analysis)"
+        with st.spinner(f"🤖 Performing AI analysis with line-by-line conflict data ({mode_text})..."):
+            
+            # Initialize comparison engine
+            engine = CSVComparisonEngine()
+            
+            # Use the new method that accepts pre-processed conflict data
+            results = engine.analyze_conflicts_directly(
+                conflict_data=conflict_data,
+                file_a_name=f"File A: {selected_file_a}",
+                file_b_name=f"File B: {selected_file_b}",
+                fast_mode=fast_mode
+            )
+            
+            # Store results in session state
+            st.session_state.comparison_results = results
+            
+            success_msg = f"✅ AI analysis completed using {mode_text} with line-by-line conflict data!"
+            st.success(success_msg)
+            
+    except Exception as e:
+        st.error(f"AI analysis failed: {e}")
+        st.exception(e)
 
 
 def perform_comparison(selected_file_a: str, selected_file_b: str, file_a_path: str, file_b_path: str, fast_mode: bool = False):
@@ -306,19 +396,44 @@ def render_comparison_results():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.metric("Total Conflicts", results["conflict_count"])
+        # Handle both formats: line-by-line comparison uses "total_conflicts", regular comparison uses "conflict_count"
+        conflict_count = results.get("conflict_count") or results.get("total_conflicts", 0)
+        st.metric("Total Conflicts", conflict_count)
     
     with col2:
-        has_diff = "Yes" if results["summary"]["has_differences"] else "No"
+        # Handle both formats for has_differences
+        if "summary" in results and isinstance(results["summary"], dict):
+            has_diff = "Yes" if results["summary"].get("has_differences", False) else "No"
+        else:
+            # For line-by-line comparison, determine from conflict count
+            has_diff = "Yes" if conflict_count > 0 else "No"
         st.metric("Has Differences", has_diff)
     
     with col3:
-        st.metric("Analysis Time", results["summary"]["analysis_timestamp"].split("T")[1][:8])
+        # Handle different timestamp formats
+        if "summary" in results and "analysis_timestamp" in results["summary"]:
+            analysis_time = results["summary"]["analysis_timestamp"].split("T")[1][:8]
+        elif "metadata" in results and "analysis_timestamp" in results["metadata"]:
+            analysis_time = results["metadata"]["analysis_timestamp"].split("T")[1][:8]
+        else:
+            analysis_time = "N/A"
+        st.metric("Analysis Time", analysis_time)
     
     # File comparison info
     st.write("**Comparing:**")
-    st.write(f"- 📄 **File A:** {results['file_a_name']}")
-    st.write(f"- 📄 **File B:** {results['file_b_name']}")
+    # Handle different file name formats
+    if "file_a_name" in results:
+        file_a_name = results["file_a_name"]
+        file_b_name = results["file_b_name"]
+    elif "metadata" in results:
+        file_a_name = results["metadata"].get("file_a", "File A")
+        file_b_name = results["metadata"].get("file_b", "File B")
+    else:
+        file_a_name = "File A"
+        file_b_name = "File B"
+    
+    st.write(f"- 📄 **File A:** {file_a_name}")
+    st.write(f"- 📄 **File B:** {file_b_name}")
     
     # AI Analysis - Most Important Section
     st.markdown("---")
@@ -329,8 +444,8 @@ def render_comparison_results():
     else:
         st.info("No AI analysis available")
     
-    # Detailed conflicts (collapsible)
-    if results["conflicts"]:
+    # Detailed conflicts (collapsible) - only for regular comparison results
+    if "conflicts" in results and results["conflicts"]:
         st.markdown("---")
         with st.expander(f"🔍 Detailed Conflicts ({len(results['conflicts'])} found)", expanded=False):
             
