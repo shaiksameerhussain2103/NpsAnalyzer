@@ -60,7 +60,10 @@ class StackTraceAIAnalyzer:
         
         for i, api_key in enumerate(self.api_keys):
             try:
-                client = OpenAI(api_key=api_key)
+                client = OpenAI(
+                    api_key=api_key,
+                    base_url="https://api.siemens.com/llm/v1"
+                )
                 self.ai_clients.append(client)
                 logger.info(f"Initialized AI client {i + 1}/{len(self.api_keys)}")
             except Exception as e:
