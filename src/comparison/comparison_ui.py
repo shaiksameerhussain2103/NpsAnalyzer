@@ -27,12 +27,54 @@ from csv_splitter import CSVSplitter
 from comparison.csv_comparison_engine import CSVComparisonEngine
 from comparison.line_by_line_comparator import render_line_by_line_comparison_ui
 
+# Import the new Stack Trace Analyzer UI (completely independent module)
+try:
+    from stack_trace_analyzer.stack_trace_ui import render_stack_trace_analyzer_ui
+    STACK_TRACE_ANALYZER_AVAILABLE = True
+except ImportError as e:
+    print(f"Stack Trace Analyzer not available: {e}")
+    STACK_TRACE_ANALYZER_AVAILABLE = False
+
 
 def render_comparison_page():
     """Render the complete CSV comparison page."""
     
-    st.title("🔍 CSV Comparison & AI Analysis")
+    st.title("🔍 Advanced Analysis Suite")
     st.markdown("---")
+    
+    # Create tabs for different analysis features
+    tab1, tab2 = st.tabs(["📊 CSV Comparison", "🔍 Stack Trace Analyzer"])
+    
+    with tab1:
+        render_csv_comparison_tab()
+    
+    with tab2:
+        render_stack_trace_analyzer_tab()
+
+
+def render_stack_trace_analyzer_tab():
+    """Render the Stack Trace Analyzer functionality (new feature)"""
+    if STACK_TRACE_ANALYZER_AVAILABLE:
+        render_stack_trace_analyzer_ui()
+    else:
+        st.error("❌ Stack Trace Analyzer module is not available.")
+        st.info("Please ensure all dependencies are installed and the module is properly configured.")
+        
+        # Show installation/setup instructions
+        with st.expander("Setup Instructions"):
+            st.markdown("""
+            **Stack Trace Analyzer Setup:**
+            
+            1. Ensure all required Python packages are installed
+            2. Verify the `stack_trace_analyzer` module is in the correct directory
+            3. Check that all module dependencies are satisfied
+            
+            **Module Location:** `src/stack_trace_analyzer/`
+            """)
+
+
+def render_csv_comparison_tab():
+    """Render the CSV comparison functionality (original functionality preserved)"""
     st.markdown("""
     **Advanced CSV Comparison Tool with Line-by-Line Analysis & AI**
     
