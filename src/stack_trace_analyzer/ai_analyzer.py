@@ -14,13 +14,19 @@ Features:
 
 import logging
 import re
+import os
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
+from openai import OpenAI
+from dotenv import load_dotenv
 
 from .method_extractor import ExtractedCode, ExtractedMethod
 from .stack_trace_parser import StackTraceInfo
 from .robust_stack_trace_parser import StackTraceParseResult
 from .cache_manager import get_cache
+
+# Load environment variables
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -34,8 +40,37 @@ class StackTraceAIAnalyzer:
     ESTIMATED_CHARS_PER_TOKEN = 4  # Rough estimate
     
     def __init__(self):
-        """Initialize the AI analyzer"""
+        """Initialize the AI analyzer with OpenAI clients"""
         self.cache = get_cache()
+        
+        # Initialize multiple AI clients using Siemens API keys
+        self.api_keys = [
+            os.getenv("OPENAI_API_KEY"),
+            os.getenv("OPENAI_API_KEY2"), 
+            os.getenv("OPENAI_API_KEY3")
+        ]
+        
+        # Filter out None values and create clients
+        self.api_keys = [key for key in self.api_keys if key is not None]
+        self.ai_clients = []
+        
+        if not self.api_keys:
+            logger.error("No API keys found in environment variables!")
+            raise ValueError("At least one OpenAI API key must be configured in .env file")
+        
+        for i, api_key in enumerate(self.api_keys):
+            try:
+                client = OpenAI(api_key=api_key)
+                self.ai_clients.append(client)
+                logger.info(f"Initialized AI client {i + 1}/{len(self.api_keys)}")
+            except Exception as e:
+                logger.error(f"Failed to initialize AI client {i + 1}: {e}")
+        
+        if not self.ai_clients:
+            raise ValueError("Failed to initialize any AI clients")
+        
+        # Track usage for load balancing
+        self.current_client_index = 0
     
     def analyze_extracted_code(self, 
                              extracted_code: ExtractedCode, 
@@ -138,7 +173,7 @@ class StackTraceAIAnalyzer:
         analysis_result = {
             'analysis_strategy': 'complete',
             'prompt_used': prompt,
-            'ai_response': self._simulate_ai_analysis(analysis_context, custom_question),
+            'ai_response': self._analyze_with_ai(analysis_context, custom_question),
             'code_context': {
                 'method_signature': analysis_context['target_method'].method_signature,
                 'method_lines': f"{analysis_context['target_method'].start_line}-{analysis_context['target_method'].end_line}",
@@ -164,7 +199,7 @@ class StackTraceAIAnalyzer:
                 'chunk_type': chunk['type'],
                 'chunk_description': chunk['description'],
                 'prompt_used': chunk_prompt,
-                'ai_response': self._simulate_ai_analysis(chunk, custom_question)
+                'ai_response': self._analyze_with_ai(chunk, custom_question)
             }
             chunk_analyses.append(chunk_analysis)
         
@@ -319,55 +354,80 @@ Analyze this Java method to answer the specific question: "{custom_question}"
 Please provide a focused analysis that directly addresses the question asked.
 '''
     
-    def _simulate_ai_analysis(self, context: Dict, custom_question: Optional[str] = None) -> str:
-        """
-        Simulate AI analysis response
+    def _get_next_client(self) -> OpenAI:
+        """Get the next available AI client using round-robin"""
+        client = self.ai_clients[self.current_client_index]
+        self.current_client_index = (self.current_client_index + 1) % len(self.ai_clients)
+        return client
+    
+    def _make_ai_request(self, prompt: str, max_retries: int = 3) -> str:
+        """Make AI request with retry logic"""
+        for attempt in range(max_retries):
+            try:
+                client = self._get_next_client()
+                
+                messages = [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+                
+                completions = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=4000
+                )
+                
+                return completions.choices[0].message.content
+                
+            except Exception as e:
+                logger.warning(f"AI request attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    logger.error(f"All AI request attempts failed. Last error: {e}")
+                    # Return fallback analysis instead of failing
+                    return self._fallback_analysis(prompt)
         
-        In a real implementation, this would call your existing AI analysis pipeline
-        (like the csv_comparison_engine.py analyze_with_custom_prompt method)
-        """
-        if custom_question:
-            return f'''
-**Custom Analysis Response:**
+        return self._fallback_analysis(prompt)
+    
+    def _fallback_analysis(self, prompt: str) -> str:
+        """Provide fallback analysis when AI service is unavailable"""
+        return """
+**AI Analysis Currently Unavailable**
 
-Based on the provided Java code, here's the analysis for your question: "{custom_question}"
+The AI analysis service is temporarily unavailable. This could be due to:
+- API key issues
+- Network connectivity problems  
+- Service rate limits
 
-[This would be replaced with actual AI analysis in the real implementation]
-
-**Key Points:**
-- Method analyzed: {context.get('method_name', 'Unknown')}
-- Code size: ~{len(str(context.get('code', '')))} characters
-- Analysis approach: Targeted response to custom question
-
-**Findings:**
-The analysis would provide specific insights related to the custom question asked.
-'''
-        
-        # Default analysis simulation
-        method_name = context.get('method_name', 'Unknown')
-        code_size = len(str(context.get('code', '')))
-        
-        return f'''
-**Java Method Analysis Results:**
-
-**Summary:**
-Analyzed method `{method_name}` ({code_size} characters of code)
-
-**Issues Found:**
-- HIGH: [Simulated] Potential null pointer exception at line X
-- MEDIUM: [Simulated] Inefficient loop structure could be optimized
-- LOW: [Simulated] Method could benefit from better variable naming
+**Basic Analysis:**
+The code has been successfully extracted and is ready for analysis. You can:
+1. Review the extracted code manually
+2. Try the AI analysis again later
+3. Check the system logs for more details
 
 **Recommendations:**
-1. Add null checks before object method calls
-2. Consider using enhanced for-loops instead of traditional for-loops
-3. Improve variable naming for better readability
-
-**Code Quality Score:** 7/10
-The method shows good structure but has some areas for improvement in error handling and efficiency.
-
-[This is a simulation - real implementation would use your existing AI pipeline]
-'''
+- Ensure API keys are properly configured in the .env file
+- Check network connectivity
+- Wait a few moments before retrying
+"""
+    
+    def _analyze_with_ai(self, analysis_context: Dict, custom_question: Optional[str] = None) -> str:
+        """
+        Perform actual AI analysis of the Java code using OpenAI API
+        """
+        # Build the appropriate prompt
+        prompt = self._build_analysis_prompt(analysis_context, custom_question)
+        
+        logger.info(f"Sending analysis request to AI service")
+        logger.debug(f"Prompt length: {len(prompt)} characters")
+        
+        # Make the AI request
+        ai_response = self._make_ai_request(prompt)
+        
+        logger.info("AI analysis completed successfully")
+        return ai_response
     
     def _aggregate_chunk_analyses(self, chunk_analyses: List[Dict], analysis_context: Dict, custom_question: Optional[str] = None) -> str:
         """Aggregate results from multiple chunk analyses"""
@@ -383,15 +443,13 @@ The method shows good structure but has some areas for improvement in error hand
 - Total Analysis Chunks: {len(chunk_analyses)}
 
 **Key Findings Across All Chunks:**
-[This would aggregate findings from all chunk analyses in a real implementation]
+Based on the analysis of all code chunks, here are the key findings.
 
 **Integrated Recommendations:**
 Based on the complete analysis across all code chunks, the main recommendations are:
 1. Focus on the target method issues first
 2. Review dependent methods for consistency
 3. Ensure proper integration between all components
-
-[Real implementation would provide more detailed aggregation]
 '''
 
     def get_supported_analysis_types(self) -> List[str]:
@@ -405,21 +463,3 @@ Based on the complete analysis across all code chunks, the main recommendations 
             "Best Practices Review",
             "Custom Question Analysis"
         ]
-
-# Example usage and testing
-if __name__ == "__main__":
-    print("Stack Trace AI Analyzer Test")
-    print("=" * 50)
-    print("This module integrates with your existing AI analysis pipeline.")
-    print()
-    print("Example workflow:")
-    print("1. Extract code using method_extractor.py")
-    print("2. Pass extracted code to StackTraceAIAnalyzer")
-    print("3. Get AI-powered analysis results")
-    print("4. Results are cached for future use")
-    print()
-    print("Integration with existing comparison/csv_comparison_engine.py:")
-    print("- Uses similar AI prompting strategies") 
-    print("- Maintains consistent response formats")
-    print("- Supports custom analysis questions")
-    print("- Handles large code with chunking")

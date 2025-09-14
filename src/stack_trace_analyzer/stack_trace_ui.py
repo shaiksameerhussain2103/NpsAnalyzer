@@ -35,6 +35,14 @@ Features:
 - Integration with main application UI
 """
 
+import sys
+import os
+
+# Add the parent directory to Python path for absolute imports
+current_dir = os.path.dirname(__file__)
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
 import streamlit as st
 import logging
 from typing import Dict, List, Optional, Any
@@ -42,11 +50,12 @@ from pathlib import Path
 import traceback
 from datetime import datetime
 
-from .robust_stack_trace_parser import RobustStackTraceParser, StackTraceParseResult
-from .repo_file_finder import RepositoryFileFinder, FileLocation
-from .method_extractor import JavaMethodExtractor, ExtractedCode
-from .ai_analyzer import StackTraceAIAnalyzer
-from .cache_manager import get_cache
+# Use absolute imports to avoid relative import issues
+from stack_trace_analyzer.robust_stack_trace_parser import RobustStackTraceParser, StackTraceParseResult
+from stack_trace_analyzer.repo_file_finder import RepositoryFileFinder, FileLocation
+from stack_trace_analyzer.method_extractor import JavaMethodExtractor, ExtractedCode
+from stack_trace_analyzer.ai_analyzer import StackTraceAIAnalyzer
+from stack_trace_analyzer.cache_manager import get_cache
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
